@@ -83,7 +83,7 @@ export async function generateQuiz(
   apiKey: string,
 ): Promise<AiQuiz> {
   const ai = new GoogleGenAI({ apiKey });
-  const model = process.env.GEMINI_MODEL || "gemini-flash-latest";
+  const model = process.env.GEMINI_MODEL || "gemini-3.5-flash";
 
   let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
