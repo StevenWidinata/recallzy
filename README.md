@@ -32,6 +32,8 @@ Next.js (App Router, TypeScript) · Tailwind CSS · Supabase (auth, Postgres, st
    | `GEMINI_API_KEY` | Google AI Studio |
    | `GEMINI_MODEL` | `gemini-3.5-flash` |
    | `DAILY_QUIZ_LIMIT` | New quizzes per user per day with the shared key (default `5`) |
+   | `GEMINI_API_KEYS` | *Optional.* Extra keys, comma-separated — used when the first runs out |
+   | `GEMINI_MODELS` | *Optional.* Your own fallback model list, comma-separated |
 
 5. **Start it:**
 
@@ -55,7 +57,8 @@ Next.js (App Router, TypeScript) · Tailwind CSS · Supabase (auth, Postgres, st
 1. The browser uploads files straight to a private Supabase Storage folder for that user.
 2. `POST /api/generate` checks the daily limit, reads the files (PDFs and images go to Gemini directly; Word/PowerPoint text is extracted first) and asks Gemini for a quiz in a strict JSON format.
 3. The AI is called **once per quiz** — taking it, retrying and flashcards cost nothing.
-4. Row Level Security in Postgres makes sure every user only ever sees their own materials, quizzes and answers.
+4. **Automatic fallback:** if a model is out of free quota, overloaded or too slow, Recallzy switches to the next model (`gemini-3.5-flash` → `gemini-3.6-flash` → `gemini-3.5-flash-lite` → `gemini-3.1-flash-lite`), and across every key in `GEMINI_API_KEYS`. Each model has its own free quota, so this multiplies how many quizzes the site can make per day. Exhausted model/key pairs are skipped for a while so later requests go straight to one that works.
+5. Row Level Security in Postgres makes sure every user only ever sees their own materials, quizzes and answers.
 
 ## Project structure
 

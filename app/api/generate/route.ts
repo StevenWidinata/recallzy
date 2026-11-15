@@ -4,11 +4,13 @@ import { createClient, getCurrentUser } from "@/lib/supabase/server";
 import { GenerateRequestSchema, MAX_FILE_BYTES, MAX_TEXT_CHARS, MAX_TOTAL_BYTES } from "@/lib/schemas";
 import { geminiMimeOf, kindOf } from "@/lib/files";
 import { extractDocxText, extractPptxText } from "@/lib/extract";
-import { GenerationError, generateQuiz } from "@/lib/gemini";
+import { GenerationError, generateQuiz, sharedKeys } from "@/lib/gemini";
 import { dailyLimit, recordUsage, usedToday } from "@/lib/limits";
 
 export const runtime = "nodejs";
-export const maxDuration = 60; // seconds — generating a big quiz can take a while
+// Seconds. Leaves room for file reading + the AI's budget (GENERATION_BUDGET_MS = 80 s),
+// including switching to backup models when one is slow or out of quota.
+export const maxDuration = 120;
 
 function fail(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
@@ -26,8 +28,8 @@ export async function POST(request: NextRequest) {
 
   // Own key (from the user's browser) skips the shared daily limit.
   const ownKey = request.headers.get("x-gemini-key")?.trim() || null;
-  const apiKey = ownKey || process.env.GEMINI_API_KEY;
-  if (!apiKey) return fail("The AI isn't set up yet (missing GEMINI_API_KEY).", 500);
+  const keys = ownKey ? [ownKey] : sharedKeys();
+  if (keys.length === 0) return fail("The AI isn't set up yet (missing GEMINI_API_KEY).", 500);
 
   if (!ownKey && (await usedToday(user.id)) >= dailyLimit()) {
     return fail(
@@ -81,7 +83,7 @@ export async function POST(request: NextRequest) {
   // ---- Ask the AI.
   let quiz;
   try {
-    quiz = await generateQuiz(parts, settings, apiKey);
+    quiz = await generateQuiz(parts, settings, keys, { ownKey: Boolean(ownKey) });
   } catch (err) {
     if (err instanceof GenerationError) return fail(err.message, err.status);
     console.error(err);
