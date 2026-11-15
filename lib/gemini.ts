@@ -1,5 +1,5 @@
 import "server-only";
-import { ApiError, GoogleGenAI, type Part } from "@google/genai";
+import { ApiError, GoogleGenAI, ThinkingLevel, type Part } from "@google/genai";
 import { z } from "zod";
 import {
   AiQuizSchema,
@@ -84,9 +84,14 @@ export async function generateQuiz(
 ): Promise<AiQuiz> {
   const ai = new GoogleGenAI({ apiKey });
   const model = process.env.GEMINI_MODEL || "gemini-3.5-flash";
+  // Hosting cuts requests off at 60 s, so the AI gets a total budget a bit below that.
+  const deadline = Date.now() + GENERATION_BUDGET_MS;
 
   let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
+    const timeLeft = deadline - Date.now();
+    if (attempt > 0 && timeLeft < 15_000) break; // not enough time for a retry
+    const started = Date.now();
     try {
       const response = await ai.models.generateContent({
         model,
@@ -96,8 +101,12 @@ export async function generateQuiz(
           responseMimeType: "application/json",
           responseJsonSchema: RESPONSE_SCHEMA,
           temperature: 0.5,
+          // Writing quiz questions doesn't need deep reasoning; low thinking is much faster.
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+          httpOptions: { timeout: timeLeft },
         },
       });
+      console.info(`Gemini ${model} answered in ${((Date.now() - started) / 1000).toFixed(1)}s (attempt ${attempt + 1})`);
 
       const parsed = AiQuizSchema.safeParse(JSON.parse(response.text ?? ""));
       if (!parsed.success) {
@@ -112,6 +121,13 @@ export async function generateQuiz(
       return quiz;
     } catch (err) {
       if (err instanceof ApiError) throw toGenerationError(err);
+      if (isTimeout(err)) {
+        console.error(`Gemini ${model} timed out after ${((Date.now() - started) / 1000).toFixed(1)}s`);
+        throw new GenerationError(
+          "The AI took too long to answer. Try fewer questions or fewer files, then try again.",
+          504,
+        );
+      }
       lastError = err; // e.g. JSON.parse failure — retry once
     }
   }
@@ -121,6 +137,13 @@ export async function generateQuiz(
     "The AI couldn't make a quiz from this material. Try clearer files or fewer questions.",
     502,
   );
+}
+
+const GENERATION_BUDGET_MS = 50_000;
+
+function isTimeout(err: unknown) {
+  if (!(err instanceof Error)) return false;
+  return err.name === "AbortError" || err.name === "TimeoutError" || /abort|timed? ?out/i.test(err.message);
 }
 
 function toGenerationError(err: ApiError): GenerationError {
